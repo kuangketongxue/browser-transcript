@@ -18,15 +18,16 @@
 
 ### 2. 启动本地服务器
 
-> ⚠️ 不能直接双击 HTML 文件打开（`file://` 协议下 fetch 请求会被浏览器拦截）
+> ⚠️ 不能直接双击 HTML 文件（`file://` 协议下 fetch 请求会被浏览器拦截）
 
-**方式一：双击 `启动逐字稿服务器.bat`**（Windows）
+**方式一：双击 `启动逐字稿服务器.cmd`**（Windows，推荐）
 
 **方式二：手动启动**
 ```bash
-python -m http.server 8765
+python start-server.py
 ```
-然后访问 http://localhost:8765
+
+然后浏览器访问 http://localhost:8765
 
 ### 3. 使用
 
@@ -35,6 +36,16 @@ python -m http.server 8765
 3. 点击 **▶ 开始录制** → 选择目标标签页 → 勾选「分享标签页音频」
 4. 实时逐字稿显示
 5. 结束后点 **⏹ 停止**，然后 **📋 复制** 或 **💾 导出**
+
+## 文件结构
+
+```
+├── README.md
+├── start-server.py          # 启动 HTTP 服务器 + 自动开浏览器
+├── 启动逐字稿服务器.cmd     # Windows 双击启动器（调用 start-server.py）
+└── scripts/
+    └── 直播逐字稿录制器.html   # 录制器主程序
+```
 
 ## 技术方案
 
