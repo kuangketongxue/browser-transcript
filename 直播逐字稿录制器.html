@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>直播逐字稿录制器 — StepFun ASR</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #0f1117; color: #e4e4e7; min-height: 100vh;
+}
+.container { max-width: 960px; margin: 0 auto; padding: 20px 24px; }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:10px; }
+.header h1 { font-size:18px; font-weight:600; white-space:nowrap; }
+.header h1 span { color:#a78bfa; }
+.controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.status { display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:16px; font-size:12px; font-weight:500; background:#1c1c24; border:1px solid #2a2a35; }
+.dot { width:7px; height:7px; border-radius:50%; background:#52525b; transition:.3s; }
+.status.recording .dot { background:#ef4444; animation:pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+.btn { padding:7px 15px; border-radius:7px; border:none; font-size:12px; font-weight:500; cursor:pointer; transition:.15s; display:flex; align-items:center; gap:5px; white-space:nowrap; }
+.btn:disabled { opacity:.35; cursor:not-allowed; }
+.btn-primary { background:#7c3aed; color:#fff; }
+.btn-primary:hover:not(:disabled) { background:#6d28d9; }
+.btn-danger { background:#dc2626; color:#fff; }
+.btn-danger:hover:not(:disabled) { background:#b91c1c; }
+.btn-ghost { background:transparent; color:#a1a1aa; border:1px solid #2a2a35; }
+.btn-ghost:hover:not(:disabled) { background:#1c1c24; color:#e4e4e7; }
+.settings { display:flex; gap:14px; align-items:center; margin-bottom:14px; padding:10px 14px; background:#1c1c24; border-radius:9px; border:1px solid #2a2a35; font-size:12px; flex-wrap:wrap; }
+.settings label { color:#a1a1aa; }
+.settings select, .settings input[type="text"] { background:#27272a; border:1px solid #3f3f46; color:#e4e4e7; padding:3px 7px; border-radius:5px; font-size:12px; }
+.settings input[type="text"] { width:280px; font-family:monospace; font-size:11px; }
+.transcript-box { background:#1c1c24; border:1px solid #2a2a35; border-radius:10px; min-height:440px; max-height:68vh; overflow-y:auto; padding:18px; scroll-behavior:smooth; }
+.transcript-box::-webkit-scrollbar { width:5px; }
+.transcript-box::-webkit-scrollbar-track { background:transparent; }
+.transcript-box::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:3px; }
+.empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; height:400px; color:#52525b; }
+.empty-state .icon { font-size:44px; margin-bottom:14px; }
+.empty-state p { font-size:13px; line-height:1.9; text-align:center; }
+.entry { margin-bottom:10px; animation:fadeIn .25s; }
+.entry-time { font-size:10px; color:#6366f1; font-family:monospace; user-select:all; }
+.entry-text { font-size:14px; line-height:1.7; color:#d4d4d8; }
+.entry.interim .entry-text { color:#71717a; font-style:italic; }
+.entry.final-end .entry-text { color:#52525b; text-align:center; font-size:12px; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(3px)} to{opacity:1;transform:translateY(0)} }
+.live-tag { display:none; padding:2px 7px; border-radius:4px; background:#dc2626; color:#fff; font-size:10px; font-weight:600; letter-spacing:.5px; animation:pulse 1s infinite; }
+.live-tag.show { display:inline-block; }
+.timer { font-family:monospace; font-size:12px; color:#a1a1aa; min-width:55px; }
+.stats { display:flex; gap:14px; margin-top:10px; font-size:11px; color:#52525b; }
+.error-msg { padding:10px 14px; background:#450a0a; border:1px solid #7f1d1d; border-radius:7px; color:#fca5a5; font-size:12px; margin-bottom:10px; display:none; line-height:1.6; }
+.error-msg.show { display:block; }
+.file-warn { background:#1e1b4b; border-color:#4338ca; color:#c4b5fd; }
+.file-warn a { color:#a78bfa; }
+.file-warn code { background:#27272a; padding:2px 6px; border-radius:4px; }
+.log-box { margin-top:10px; padding:8px 12px; background:#1a1a22; border:1px solid #2a2a35; border-radius:7px; font-size:11px; color:#6b7280; font-family:monospace; max-height:80px; overflow-y:auto; display:none; }
+.log-box.show { display:block; }
+.log-entry { margin-bottom:2px; }
+.log-entry.err { color:#f87171; }
+.log-entry.ok { color:#4ade80; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>🎙️ 直播逐字稿<span>·StepFun</span></h1>
+    <div class="controls">
+      <div class="status" id="status"><div class="dot"></div><span id="status-text">未开始</span></div>
+      <span class="live-tag" id="live-tag">LIVE</span>
+      <span class="timer" id="timer">00:00:00</span>
+      <button class="btn btn-primary" id="btn-start" onclick="startCapture()">▶ 开始录制</button>
+      <button class="btn btn-danger" id="btn-stop" onclick="stopCapture()" disabled>⏹ 停止</button>
+      <button class="btn btn-ghost" id="btn-copy" onclick="copyTranscript()" disabled>📋 复制</button>
+      <button class="btn btn-ghost" id="btn-export" onclick="exportTranscript()" disabled>💾 导出</button>
+    </div>
+  </div>
+  <div class="error-msg" id="error-msg"></div>
+  <div class="error-msg file-warn" id="file-warning" style="display:none">
+    ⚠️ 直接双击打开（file://）时 fetch 请求会被浏览器拦截。<br>
+    <b>解决：</b>双击桌面 <code>启动逐字稿服务器.bat</code>，然后访问 <a href="http://localhost:8765">http://localhost:8765</a>
+  </div>
+  <div class="settings">
+    <label>API Key</label>
+    <input type="text" id="api-key" placeholder="填入你的 StepFun API Key" />
+    <label>语言</label>
+    <select id="lang-select">
+      <option value="zh" selected>中文</option>
+      <option value="en">English</option>
+    </select>
+    <label>热词</label>
+    <input type="text" id="hotwords" placeholder="小鹅通,直播,课程" style="width:160px" />
+    <label>字号</label>
+    <select id="font-size" onchange="changeFontSize()">
+      <option value="12">小</option>
+      <option value="14" selected>中</option>
+      <option value="17">大</option>
+    </select>
+    <label><input type="checkbox" id="auto-scroll" checked /> 自动滚屏</label>
+    <label><input type="checkbox" id="show-log" onchange="toggleLog()" /> 日志</label>
+  </div>
+  <div class="transcript-box" id="transcript-box">
+    <div class="empty-state" id="empty-state">
+      <div class="icon">🎧</div>
+      <p>
+        点击「开始录制」→ 选择小鹅通直播的标签页<br>
+        选择「分享标签页音频」<br>
+        识别结果通过 StepFun HTTP+SSE 实时显示（Mini Plan 额度）
+      </p>
+    </div>
+  </div>
+  <div class="stats" id="stats">
+    <span id="stat-chars">字数：0</span>
+    <span id="stat-segments">段落：0</span>
+    <span id="stat-duration">时长：00:00:00</span>
+  </div>
+  <div class="log-box" id="log-box"></div>
+</div>
+
+<script>
+// ==================== file:// 检测 ====================
+if (location.protocol === 'file:') document.getElementById('file-warning').style.display = 'block';
+
+// ==================== State ====================
+let audioStream = null, audioCtx = null, processor = null, sourceNode = null;
+let segments = [], interimText = '', interimEntry = null;
+let timerInterval = null, startTime = null, isRecording = false, charCount = 0;
+let audioBuffer = new Float32Array(0);  // 待发送的音频缓冲
+let sendInProgress = false;             // 防止并发请求
+
+const $ = id => document.getElementById(id);
+const $status = $('status'), $statusText = $('status-text'), $liveTag = $('live-tag');
+const $timer = $('timer'), $transcript = $('transcript-box'), $emptyState = $('empty-state');
+const $errorMsg = $('error-msg'), $logBox = $('log-box');
+
+if (!navigator.mediaDevices?.getDisplayMedia) {
+  showError('浏览器不支持标签页音频捕获，请用 Chrome / Edge。');
+  $('btn-start').disabled = true;
+}
+
+function log(msg, t='') { const d=document.createElement('div'); d.className='log-entry '+t; d.textContent=`[${new Date().toLocaleTimeString('zh-CN')}] ${msg}`; $logBox.appendChild(d); $logBox.scrollTop=$logBox.scrollHeight; }
+function toggleLog() { $logBox.classList.toggle('show', $('show-log').checked); }
+function showError(msg) { $errorMsg.textContent=msg; $errorMsg.classList.add('show'); }
+function hideError() { $errorMsg.classList.remove('show'); }
+
+// ==================== SSE ASR 请求 ====================
+async function sendAudioChunk(pcm16Data) {
+  if (sendInProgress) return;
+  sendInProgress = true;
+  const apiKey = $('api-key').value.trim();
+  const lang = $('lang-select').value;
+  const hotwords = $('hotwords').value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+
+  // Int16 → Base64
+  const bytes = new Uint8Array(pcm16Data.buffer);
+  let b64 = '';
+  // 分块处理避免大字符串溢出
+  const CHUNK = 32768;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const slice = bytes.subarray(i, i + CHUNK);
+    let s = '';
+    for (let j = 0; j < slice.length; j++) s += String.fromCharCode(slice[j]);
+    b64 += s;
+  }
+  const audioB64 = btoa(b64);
+
+  const payload = {
+    audio: {
+      data: audioB64,
+      input: {
+        transcription: {
+          model: 'stepaudio-2.5-asr',
+          language: lang,
+          enable_itn: true,
+          ...(hotwords.length ? { hotwords } : {}),
+        },
+        format: { type: 'pcm', codec: 'pcm_s16le', rate: 16000, bits: 16, channel: 1 },
+      },
+    },
+  };
+
+  try {
+    log(`发送 ${(pcm16Data.length/16000).toFixed(1)}s 音频...`, '');
+    const resp = await fetch('https://api.stepfun.com/step_plan/v1/audio/asr/sse', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+        'Authorization': 'Bearer ' + apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      log(`HTTP ${resp.status}: ${errText}`, 'err');
+      if (resp.status === 402) showError('额度不足: ' + errText);
+      return;
+    }
+
+    // 解析 SSE 流
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      sseBuffer += decoder.decode(value, { stream: true });
+
+      const lines = sseBuffer.split('\n');
+      sseBuffer = lines.pop(); // 保留未完成的行
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === 'transcript.text.delta' && evt.delta) {
+            // 增量文本（中间结果）
+          } else if (evt.type === 'transcript.text.done') {
+            const text = (evt.text || '').trim();
+            if (text) {
+              removeInterim();
+              addSegment(text, false);
+              log(`✅ "${text.slice(0, 30)}${text.length>30?'...':''}"`, 'ok');
+            }
+          } else if (evt.type === 'error') {
+            log('服务端错误: ' + (evt.message || JSON.stringify(evt)), 'err');
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {
+    log('请求失败: ' + e.message, 'err');
+    if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+      showError('网络请求失败。如从 file:// 打开，请改用本地服务器（双击 启动逐字稿服务器.bat）');
+    }
+  } finally {
+    sendInProgress = false;
+  }
+}
+
+// ==================== 音频处理 ====================
+function onAudioProcess(e) {
+  const inputBuffer = e.inputBuffer;
+  let mono;
+  if (inputBuffer.numberOfChannels >= 2) {
+    const ch0 = inputBuffer.getChannelData(0), ch1 = inputBuffer.getChannelData(1);
+    mono = new Float32Array(ch0.length);
+    for (let i = 0; i < ch0.length; i++) mono[i] = (ch0[i] + ch1[i]) * 0.5;
+  } else {
+    mono = new Float32Array(inputBuffer.getChannelData(0));
+  }
+  // 48kHz → 16kHz (3:1)
+  const resampled = new Float32Array(Math.floor(mono.length / 3));
+  for (let i = 0; i < resampled.length; i++) resampled[i] = mono[i * 3];
+
+  // 追加到 buffer
+  const newBuf = new Float32Array(audioBuffer.length + resampled.length);
+  newBuf.set(audioBuffer);
+  newBuf.set(resampled, audioBuffer.length);
+  audioBuffer = newBuf;
+
+  // 每 2 秒（32000 样本 @16kHz）发送一次
+  const CHUNK_SAMPLES = 32000;
+  if (audioBuffer.length >= CHUNK_SAMPLES && !sendInProgress) {
+    const chunk = audioBuffer.slice(0, CHUNK_SAMPLES);
+    audioBuffer = audioBuffer.slice(CHUNK_SAMPLES);
+
+    // Float32 → Int16
+    const pcm16 = new Int16Array(chunk.length);
+    for (let i = 0; i < chunk.length; i++) {
+      const s = Math.max(-1, Math.min(1, chunk[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    sendAudioChunk(pcm16);
+  }
+}
+
+// ==================== Start ====================
+async function startCapture() {
+  hideError();
+
+  try {
+    audioStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'browser' },
+      audio: { suppressLocalAudioPlayback:false, echoCancellation:false, noiseSuppression:false, autoGainControl:false },
+      preferCurrentTab: false, selfBrowserSurface: 'exclude', systemAudio: 'include',
+    });
+
+    const audioTracks = audioStream.getAudioTracks();
+    if (!audioTracks.length) {
+      showError('未捕获到音频。请在弹窗中选「分享标签页音频」。');
+      stopStream();
+      return;
+    }
+    log(`捕获到 ${audioTracks.length} 条音频轨`, 'ok');
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    sourceNode = audioCtx.createMediaStreamSource(audioStream);
+    processor = audioCtx.createScriptProcessor(4096, 2, 1);
+    processor.onaudioprocess = onAudioProcess;
+    sourceNode.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    audioTracks.forEach(t => t.addEventListener('ended', () => stopCapture()));
+
+    setRecording(true);
+    startTime = Date.now();
+    startTimer();
+    audioBuffer = new Float32Array(0);
+    log('录制开始（每 2 秒发送一次识别请求）', 'ok');
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') showError('启动失败: ' + err.message);
+    stopAll();
+  }
+}
+
+// ==================== Stop ====================
+function stopCapture() {
+  setRecording(false); stopTimer();
+  if (processor) { processor.disconnect(); processor = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  removeInterim(); stopStream();
+
+  // 发送剩余音频
+  if (audioBuffer.length > 1600 && !sendInProgress) {
+    const pcm16 = new Int16Array(audioBuffer.length);
+    for (let i = 0; i < audioBuffer.length; i++) {
+      const s = Math.max(-1, Math.min(1, audioBuffer[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    audioBuffer = new Float32Array(0);
+    sendAudioChunk(pcm16).then(() => {
+      if (segments.length > 0) {
+        addSegment('—— 录制结束 ——', false);
+        $transcript.lastElementChild?.classList.add('final-end');
+      }
+    });
+  } else if (segments.length > 0) {
+    addSegment('—— 录制结束 ——', false);
+    $transcript.lastElementChild?.classList.add('final-end');
+  }
+  log('停止录制', '');
+}
+
+function stopStream() { if (audioStream) { audioStream.getTracks().forEach(t=>t.stop()); audioStream=null; } }
+function stopAll() {
+  if(processor){processor.disconnect();processor=null;} if(sourceNode){sourceNode.disconnect();sourceNode=null;}
+  if(audioCtx){audioCtx.close();audioCtx=null;} stopStream(); stopTimer(); setRecording(false);
+}
+
+// ==================== UI ====================
+function setRecording(s) {
+  isRecording=s; $('btn-start').disabled=s; $('btn-stop').disabled=!s;
+  $('btn-copy').disabled=segments.length===0; $('btn-export').disabled=segments.length===0;
+  $status.className='status'+(s?' recording':''); $statusText.textContent=s?'录制中':'已停止';
+  $liveTag.className='live-tag'+(s?' show':'');
+}
+function addSegment(text, isInterim) {
+  if(!text) return; if($emptyState) $emptyState.style.display='none';
+  const timeStr=fmtTime(Date.now()-startTime);
+  const div=document.createElement('div'); div.className='entry'+(isInterim?' interim':'');
+  div.innerHTML=`<div class="entry-time">${timeStr}</div><div class="entry-text">${esc(text)}</div>`;
+  $transcript.appendChild(div);
+  if(!isInterim){segments.push({time:timeStr,text});charCount+=text.length;updateStats();$('btn-copy').disabled=false;$('btn-export').disabled=false;}
+  scrollBottom();
+}
+function updateInterim(text) {
+  if(!interimEntry){const d=document.createElement('div');d.className='entry interim';d.innerHTML='<div class="entry-time"></div><div class="entry-text"></div>';$transcript.appendChild(d);interimEntry={element:d};}
+  interimEntry.element.querySelector('.entry-text').textContent=text; scrollBottom();
+}
+function removeInterim() { if(interimEntry){interimEntry.element.remove();interimEntry=null;interimText='';} }
+function scrollBottom() { if($('auto-scroll').checked) $transcript.scrollTop=$transcript.scrollHeight; }
+function updateStats() { $('stat-chars').textContent='字数：'+charCount; $('stat-segments').textContent='段落：'+segments.length; }
+
+function startTimer() { timerInterval=setInterval(()=>{const el=Date.now()-startTime;$timer.textContent=fmtTime(el);$('stat-duration').textContent='时长：'+fmtTime(el);},1000); }
+function stopTimer() { if(timerInterval){clearInterval(timerInterval);timerInterval=null;} }
+function fmtTime(ms) { const s=Math.floor(ms/1000); return [Math.floor(s/3600),Math.floor((s%3600)/60),s%60].map(v=>String(v).padStart(2,'0')).join(':'); }
+
+function copyTranscript() { navigator.clipboard.writeText(segments.map(s=>`[${s.time}] ${s.text}`).join('\n')).then(()=>{const o=$('btn-copy').textContent;$('btn-copy').textContent='✅ 已复制';setTimeout(()=>$('btn-copy').textContent=o,1200);}); }
+function exportTranscript() {
+  const title=prompt('逐字稿标题：','小鹅通直播逐字稿'); if(title===null)return;
+  const lines=[]; if(title)lines.push('# '+title);
+  lines.push(`> 录制时间：${new Date(startTime).toLocaleString('zh-CN')}`);
+  lines.push(`> 总时长：${$timer.textContent} ｜ 总字数：${charCount}`);
+  lines.push('','---','');
+  segments.forEach(s=>lines.push(`**[${s.time}]** ${s.text}`,''));
+  const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`逐字稿_${new Date(startTime).toISOString().slice(0,10)}.md`; a.click(); URL.revokeObjectURL(a.href);
+}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function changeFontSize(){$transcript.style.fontSize=$('font-size').value+'px';}
+document.addEventListener('keydown',e=>{if(e.key==='F5'||(e.ctrlKey&&e.key==='Enter')){e.preventDefault();isRecording?stopCapture():startCapture();}});
+</script>
+</body>
+</html>
